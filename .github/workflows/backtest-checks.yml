@@ -31,9 +31,10 @@ jobs:
         run: |
           mkdir -p data
           python fetch_history.py --codes 000001,600000,000858,600519,300750,002594,601318,000333,600036,002415 --start 20230101 --end 20261028 --adjust qfq --out data/daily_bars.csv
-      - name: Run portfolio backtest
+      - name: Run baseline and pullback comparison
         run: |
-          python portfolio_backtest.py data/daily_bars.csv --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/portfolio_trades.csv --equity-out data/portfolio_equity.csv
+          python portfolio_backtest.py data/daily_bars.csv --strategy baseline --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/baseline_trades.csv --equity-out data/baseline_equity.csv
+          python portfolio_backtest.py data/daily_bars.csv --strategy pullback --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/pullback_trades.csv --equity-out data/pullback_equity.csv
       - name: Upload backtest results
         if: always()
         uses: actions/upload-artifact@v4
