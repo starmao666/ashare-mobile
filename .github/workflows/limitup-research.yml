@@ -14,7 +14,7 @@ permissions:
   contents: write
 concurrency:
   group: limitup-research
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   research:
     runs-on: ubuntu-latest
