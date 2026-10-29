@@ -174,7 +174,7 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
                     "pnl_after_modeled_costs": round(pnl, 2),
                     "entry_fee": round(pos["entry_fee"], 2), "exit_fee": round(exit_fee, 2),
                     "sell_tax": round(exit_tax, 2), "slippage_rate": slippage_rate,
-                    "return_pct_on_entry_value": round((price / pos["entry_price"] - 1) * 100, 4),
+                    "return_pct_on_entry_value": round((executed_exit / pos["entry_price"] - 1) * 100, 4),
                     "holding_bars": pos["bars_held"],
                 })
                 del positions[code]
@@ -240,8 +240,8 @@ def main() -> None:
         print(f"Max equity drawdown: {dd.min() * 100:.2f}%")
     if not trades.empty:
         print(f"Win rate: {(trades['pnl_after_modeled_fees'] > 0).mean() * 100:.2f}%")
-    print("Research approximation only: fees are simplified; slippage, price limits, taxes, "
-          "suspensions and corporate-action execution are not fully modeled.")
+    print(f"Modeled costs: commission={args.fee:.4%}/side, sell tax={args.sell_tax:.4%}, slippage={args.slippage:.4%}/side.")
+    print("Research approximation only: price-limit fills, suspensions, corporate actions, and survivorship bias are not fully modeled.")
 
 
 if __name__ == "__main__":
