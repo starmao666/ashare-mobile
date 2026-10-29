@@ -30,7 +30,7 @@ async function load(){
   stats.innerHTML=items.map(x=>'<div class="stat"><div class="num">'+(x[1]??'—')+'</div><div class="label">'+x[0]+'</div></div>').join('');
   const s=await fetch(base+'summary_by_streak.csv?ts='+Date.now());
   if(s.ok){const txt=await s.text();const rows=csv(txt);if(rows.length>1){summary.innerHTML='<div class="scroll"><table><thead><tr>'+rows[0].map(v=>'<th>'+esc(v)+'</th>').join('')+'</tr></thead><tbody>'+rows.slice(1).map(row=>'<tr>'+row.map(v=>'<td>'+esc(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';}else summary.textContent='样本不足或没有可计算的次日收益。';}
-  const names=['run_report.json','summary_by_streak.csv','three_plus_limitup_samples.csv','three_plus_next_day_returns.csv','daily_limit_pool_all.csv','failed_dates.csv'];
+  const names=['run_report.json','summary_by_streak.csv','three_plus_limitup_samples.csv','three_plus_next_day_returns.csv','daily_limit_pool_all.csv','failed_dates.csv','failed_return_stocks.csv'];
   files.innerHTML=names.map(n=>'<p><a href="'+base+n+'">'+n+'</a></p>').join('');
  }catch(e){status.innerHTML='<span class="warn">'+esc(e.message)+'</span>';stats.innerHTML='';summary.innerHTML='请先打开 GitHub Actions 工作流并点击 Run workflow。任务完成后，结果会自动发布到本页。';files.innerHTML='<a href="https://github.com/starmao666/ashare-mobile/actions/workflows/limitup-research.yml">打开工作流</a>';}
 }
