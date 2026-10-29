@@ -1,61 +1,41 @@
-# A股短线选股器 V1.0（手机网页 + 本地研究工具）
+# A股短线选股器 + 近三年连板规律研究
 
 ## 手机网页
-- 单页响应式网页，适配手机和桌面浏览器。
-- 通过浏览器请求东方财富公开行情接口，尝试获取沪深 A 股列表。
-- 展示价格、涨跌幅、换手率、量比和基于量价字段的观察评分。
-- 支持市场范围、涨跌幅条件、排序筛选。
-- 内置单笔风险预算/股数估算器，默认风险上限为账户权益的 0.75%。
-- 行情失败时明确提示，不用模拟行情填充。
+- 原有首页：量价观察与风险预算估算。
+- 新增连板研究页：`/limitup-research`。
+- 研究页可启动历史提取任务，并下载CSV与运行覆盖率报告。
+- 不预填模拟行情、胜率或收益；接口失败日期会单独记录。
+- 公开行情接口由第三方提供，可能限流、变更或返回缺失数据。
 
-## 下载真实历史行情
-需要 Python 3.10+。先安装依赖：
+## Render 部署
+仓库根目录的 `render.yaml` 配置为免费的 Python Web Service（Flask + Gunicorn），保留原首页并提供研究 API。
 
+1. 打开 Render Blueprint 页面并连接 GitHub：
+   https://dashboard.render.com/blueprint/new?repo=https://github.com/starmao666/ashare-mobile
+2. 如提示，授权 Render 访问该 GitHub 仓库。
+3. 检查 Blueprint 中的服务名 `ashare-limitup-research`、免费计划和启动命令。
+4. 点击 Apply/Deploy，等待状态变成 Live。
+5. 打开 Render 提供的真实网址；首页为 `/`，研究页面为 `/limitup-research`。
+
+部署指南： https://render.com/docs/infrastructure-as-code
+
+## 连板研究页面
+页面默认研究区间：2023-10-29 至 2026-10-29。
+- 逐交易日提取涨停池；当天连板数 >= 3 进入样本表。
+- 尝试匹配次日开盘、最高、收盘，计算相对样本日收盘价的价格变化。
+- 导出文件：`daily_limit_pool_all.csv`、`three_plus_limitup_samples.csv`、`three_plus_next_day_returns.csv`、`summary_by_streak.csv`、`failed_dates.csv`、`run_report.json`。
+- 如果失败日期大于 0，报告会标记为不完整；失败日期不会被视为“零涨停”。
+- 免费实例可能休眠或重启；后台任务中断时需要重新运行。当前没有配置持久磁盘，服务重启后缓存/结果文件可能丢失。
+
+## 本地历史行情研究
+需要 Python 3.10+。安装依赖：
 ```bash
 pip install -r requirements.txt
 ```
+历史日线下载与基线回测脚本说明见原有文件 `fetch_history.py`、`backtest.py`、`portfolio_backtest.py` 和 `STRATEGY.md`。
 
-少量股票试跑（日期按需调整）：
-
-```bash
-python fetch_history.py --codes 000001,600000,000858 --start 20230101 --end 20261028 --out data/daily_bars.csv
-```
-
-也可将代码每行写入 `codes.txt`，用 `--codes-file codes.txt`。数据通过 AkShare 在运行时请求第三方接口；接口可能限流或变更，下载失败会打印错误，不会用虚构数据补齐。默认前复权（qfq），不要混合不同复权口径。
-
-## 回测方式
-单股票基线回测：
-
-```bash
-python backtest.py data/daily_bars.csv --stop 0.05 --target 0.08 --max-hold 5 --out data/backtest_trades.csv
-```
-
-组合资金与风险预算回测：
-
-```bash
-python portfolio_backtest.py data/daily_bars.csv --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --out data/portfolio_trades.csv --equity-out data/portfolio_equity.csv
-```
-
-## 自动代码检查
-GitHub Actions 工作流会在推送到 main、Pull Request 或手动触发时安装依赖、编译 Python 文件并运行单元测试。请在仓库 Actions 页面查看实际运行状态；提交工作流文件不等于测试已通过。
-
-## 策略边界
-- 网页即时分数仍是简化的行情观察分数，不是完整基本面模型或买入建议。
-- 当前回测信号是透明的基线示例：收盘价高于 MA20 且当日涨跌幅在 -3% 到 +2% 之间；信号在收盘后形成，下一交易日开盘入场。
-- 组合版按共享现金、100 股整数手、单笔风险预算和持仓数量限制估算仓位；仍未完整模拟印花税、滑点、涨跌停无法成交、停牌、公司行动、跨股票交易时序及所有券商费用规则。
-- 日线 OHLC 无法还原盘中止盈止损先后；同日同时触及按止损优先处理。缺少行情时不会编造价格，但缺失交易日的持仓处理仍是简化假设。
-- 尚未在本次开发中实际下载行情或执行回测。不要把代码示例当成已验证的策略，也不要引用未经运行的胜率/收益数字。
-- 完整“主线题材 + 业绩稳健 + 主升后首次回调”模型仍需接入可追溯的题材和按公告公开时间对齐的基本面数据。
-
-## 相关文件
-- `index.html`：手机网页
-- `STRATEGY.md`：策略与回测验收规范
-- `fetch_history.py`：真实历史日线下载
-- `backtest.py`：单股票基线回测
-- `portfolio_backtest.py`：组合资金与风险预算回测
-- `tests/`：单元测试
-- `.github/workflows/backtest-checks.yml`：自动代码检查
-- `requirements.txt`：Python 依赖
-
-## Render 部署
-仓库包含 `render.yaml`，但当前按用户要求暂不部署。以后需要上线时，再连接仓库并核实真实部署结果。
+## 重要统计边界
+1. 每日涨停池历史查询可用性必须以运行报告验证；接口成功返回空表与请求失败要区分。
+2. 次日收益是样本日收盘到次日价格变化，不代表能按样本日收盘成交，不含手续费、滑点及涨跌停无法成交约束。
+3. 当前版本未完整校正退市股幸存者偏差、历史ST状态和各板块涨跌停比例；需把结果当研究样本，而非投资建议。
+4. 任何回测胜率、收益和规律必须基于实际运行结果，不得用示例数字替代。
