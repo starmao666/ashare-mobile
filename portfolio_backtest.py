@@ -92,6 +92,19 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
         if todays is None:
             continue
 
+        # Estimate current equity using today's close for existing holdings before sizing new entries.
+        market_value_before_entries = 0.0
+        for held_code, held_pos in positions.items():
+            if held_code in todays.index:
+                held_row = todays.loc[held_code]
+                if isinstance(held_row, pd.DataFrame):
+                    held_row = held_row.iloc[0]
+                mark = float(held_row["close"])
+            else:
+                mark = held_pos["entry_price"]
+            market_value_before_entries += held_pos["shares"] * mark
+        equity_value = cash + market_value_before_entries
+
         # Entries are queued from the previous session close, never same-close fills.
         for code, signal_date in list(pending.items()):
             if code in positions or len(positions) >= max_positions or code not in todays.index:
