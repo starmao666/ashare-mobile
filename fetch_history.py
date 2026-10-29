@@ -15,6 +15,7 @@ from pathlib import Path
 import sys
 import time
 import pandas as pd
+import baostock as bs
 
 try:
     import akshare as ak
@@ -45,15 +46,67 @@ def normalize_code(code: str) -> str:
 
 
 def fetch_one(code: str, start: str, end: str, adjust: str) -> pd.DataFrame:
-    raw = ak.stock_zh_a_hist(
-        symbol=code, period="daily", start_date=start, end_date=end, adjust=adjust
-    )
-    if raw is None or raw.empty:
-        return pd.DataFrame()
-    missing = set(COLUMN_MAP) - set(raw.columns)
-    if missing:
-        raise ValueError(f"{code}: provider columns changed; missing {sorted(missing)}")
-    df = raw.rename(columns=COLUMN_MAP)
+    """Try AkShare/Eastmoney first, then Baostock as a real-data fallback."""
+    errors = []
+    for attempt in range(3):
+        try:
+            raw = ak.stock_zh_a_hist(
+                symbol=code, period="daily", start_date=start, end_date=end, adjust=adjust
+            )
+            if raw is None or raw.empty:
+                raise ValueError("AkShare returned no rows")
+            missing = set(COLUMN_MAP) - set(raw.columns)
+            if missing:
+                raise ValueError(f"provider columns changed; missing {sorted(missing)}")
+            df = raw.rename(columns=COLUMN_MAP)
+            return normalize_bars(df, code)
+        except Exception as exc:
+            errors.append(f"AkShare attempt {attempt + 1}: {exc}")
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+
+    # Baostock uses its own public market-data service; no token is required.
+    try:
+        lg = bs.login()
+        if getattr(lg, "error_code", "0") != "0":
+            raise RuntimeError(f"Baostock login failed: {getattr(lg, 'error_msg', '')}")
+        prefix = "sh." if code.startswith("6") else ("bj." if code.startswith(("4", "8", "9")) else "sz.")
+        adjustflag = {"qfq": "2", "hfq": "1", "": "3"}[adjust]
+        rs = bs.query_history_k_data_plus(
+            prefix + code,
+            "date,open,high,low,close,volume,amount,turn,pctChg",
+            start_date=pd.to_datetime(start).strftime("%Y-%m-%d"),
+            end_date=pd.to_datetime(end).strftime("%Y-%m-%d"),
+            frequency="d",
+            adjustflag=adjustflag,
+        )
+        if getattr(rs, "error_code", "0") != "0":
+            raise RuntimeError(f"Baostock query failed: {getattr(rs, 'error_msg', '')}")
+        rows = []
+        while rs.next():
+            rows.append(rs.get_row_data())
+        bs.logout()
+        if not rows:
+            raise ValueError("Baostock returned no rows")
+        df = pd.DataFrame(rows, columns=rs.fields)
+        df = df.rename(columns={
+            "date": "date", "open": "open", "high": "high", "low": "low",
+            "close": "close", "volume": "volume", "amount": "amount",
+            "turn": "turnover", "pctChg": "pct_chg",
+        })
+        df["code"] = code
+        return normalize_bars(df, code)
+    except Exception as exc:
+        try:
+            bs.logout()
+        except Exception:
+            pass
+        errors.append(f"Baostock fallback: {exc}")
+        raise RuntimeError(" | ".join(errors)) from exc
+
+
+def normalize_bars(df: pd.DataFrame, code: str) -> pd.DataFrame:
+    df = df.copy()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["code"] = code
     for col in ("open", "high", "low", "close", "amount", "turnover", "pct_chg", "volume"):
