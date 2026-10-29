@@ -74,11 +74,13 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
                        risk_fraction: float = 0.0075, stop_fraction: float = 0.05,
                        target_fraction: float = 0.08, max_hold: int = 5,
                        max_positions: int = 5, fee_rate: float = 0.0003,
+                       sell_tax_rate: float = 0.0005, slippage_rate: float = 0.0005,
                        strategy: str = "baseline") -> tuple[pd.DataFrame, pd.DataFrame]:
     if initial_cash <= 0 or not (0 < risk_fraction < 1) or not (0 < stop_fraction < 1):
         raise ValueError("capital/risk/stop parameters are invalid")
-    if target_fraction <= 0 or max_hold < 1 or max_positions < 1 or fee_rate < 0:
-        raise ValueError("target/holding/position/fee parameters are invalid")
+    if (target_fraction <= 0 or max_hold < 1 or max_positions < 1 or fee_rate < 0
+            or sell_tax_rate < 0 or slippage_rate < 0 or slippage_rate >= 1):
+        raise ValueError("target/holding/position/cost parameters are invalid")
 
     data = build_signals(df, strategy=strategy)
     dates = sorted(data["date"].dropna().unique())
@@ -112,9 +114,10 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
             row = todays.loc[code]
             if isinstance(row, pd.DataFrame):
                 row = row.iloc[0]
-            entry = float(row["open"])
-            if entry <= 0:
+            raw_entry = float(row["open"])
+            if raw_entry <= 0:
                 continue
+            entry = raw_entry * (1 + slippage_rate)
             risk_cash = max(equity_value, 0.0) * risk_fraction
             risk_per_share = entry * stop_fraction
             shares_by_risk = int(risk_cash / risk_per_share / 100) * 100
@@ -141,6 +144,9 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
             if isinstance(row, pd.DataFrame):
                 row = row.iloc[0]
             pos = positions[code]
+            # A-share T+1: shares bought today cannot be sold today.
+            if pd.Timestamp(date).date() <= pos["entry_date"].date():
+                continue
             pos["bars_held"] += 1
             low, high = float(row["low"]), float(row["high"])
             close = float(row["close"])
@@ -152,17 +158,22 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
             elif pos["bars_held"] >= max_hold:
                 reason, price = "max_hold", close
             if reason:
-                proceeds = pos["shares"] * price
+                executed_exit = price * (1 - slippage_rate)
+                proceeds = pos["shares"] * executed_exit
                 exit_fee = proceeds * fee_rate
-                cash += proceeds - exit_fee
-                pnl = (price - pos["entry_price"]) * pos["shares"] - pos["entry_fee"] - exit_fee
+                exit_tax = proceeds * sell_tax_rate
+                cash += proceeds - exit_fee - exit_tax
+                pnl = (executed_exit - pos["entry_price"]) * pos["shares"] - pos["entry_fee"] - exit_fee - exit_tax
                 trades.append({
                     "code": code, "signal_date": pos.get("signal_date"),
                     "entry_date": pos["entry_date"].date().isoformat(),
                     "exit_date": pd.Timestamp(date).date().isoformat(),
-                    "entry_price": pos["entry_price"], "exit_price": price,
+                    "entry_price": pos["entry_price"], "exit_trigger_price": price, "exit_price": executed_exit,
                     "shares": pos["shares"], "exit_reason": reason,
                     "pnl_after_modeled_fees": round(pnl, 2),
+                    "pnl_after_modeled_costs": round(pnl, 2),
+                    "entry_fee": round(pos["entry_fee"], 2), "exit_fee": round(exit_fee, 2),
+                    "sell_tax": round(exit_tax, 2), "slippage_rate": slippage_rate,
                     "return_pct_on_entry_value": round((price / pos["entry_price"] - 1) * 100, 4),
                     "holding_bars": pos["bars_held"],
                 })
@@ -201,7 +212,9 @@ def main() -> None:
     parser.add_argument("--target", type=float, default=0.08)
     parser.add_argument("--max-hold", type=int, default=5)
     parser.add_argument("--max-positions", type=int, default=5)
-    parser.add_argument("--fee", type=float, default=0.0003, help="Per-side fee approximation")
+    parser.add_argument("--fee", type=float, default=0.0003, help="Per-side commission rate approximation")
+    parser.add_argument("--sell-tax", type=float, default=0.0005, help="Sell-side stamp duty rate")
+    parser.add_argument("--slippage", type=float, default=0.0005, help="Adverse slippage rate per side")
     parser.add_argument("--strategy", choices=["baseline", "pullback", "trend_pullback"], default="baseline",
                         help="baseline, first-pullback proxy, or trend-confirmed pullback")
     parser.add_argument("--out", default="portfolio_trades.csv")
@@ -211,7 +224,8 @@ def main() -> None:
     if df.empty:
         raise SystemExit("No valid history rows; no backtest run.")
     trades, equity = backtest_portfolio(df, args.capital, args.risk, args.stop,
-                                        args.target, args.max_hold, args.max_positions, args.fee, args.strategy)
+                                        args.target, args.max_hold, args.max_positions, args.fee,
+                                        args.sell_tax, args.slippage, args.strategy)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.equity_out).parent.mkdir(parents=True, exist_ok=True)
     trades.to_csv(args.out, index=False, encoding="utf-8-sig")
