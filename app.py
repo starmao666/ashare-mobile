@@ -110,6 +110,8 @@ def worker(start, end):
                             raw = ak.stock_zt_pool_em(date=day)
                             if raw is None:
                                 raise ValueError("涨停池接口返回 None")
+                            if raw.empty:
+                                raise ValueError("涨停池接口返回空表；无法区分真实空池与历史数据不支持，按缺失数据记录")
                             break
                         except Exception as exc:
                             last_error = exc
@@ -183,11 +185,14 @@ def worker(start, end):
                                 "次日收盘正收益比例(%)": round((s>0).mean()*100,2) if len(s) else None,
                                 "次日收盘负收益比例(%)": round((s<0).mean()*100,2) if len(s) else None})
         pd.DataFrame(summary).to_csv(OUT / "summary_by_streak.csv", index=False, encoding="utf-8-sig")
+        no_pool_data = len(all_pool) == 0
         report = {"period":{"start":start,"end":end}, "trading_days":len(days),
                   "successful_pool_days":len(days)-len(fails), "failed_pool_days":len(fails),
                   "limit_pool_rows":int(len(all_pool)), "three_plus_sample_rows":int(len(sample)),
                   "three_plus_unique_stocks":int(sample["code"].nunique()) if not sample.empty else 0,
-                  "return_rows":len(ret), "failed_return_stocks":len(return_fails), "complete":len(fails)==0 and len(return_fails)==0,
+                  "return_rows":len(ret), "failed_return_stocks":len(return_fails),
+                  "status":"failed" if no_pool_data else ("partial" if len(fails)>0 or len(return_fails)>0 else "complete"),
+                  "complete":not no_pool_data and len(fails)==0 and len(return_fails)==0,
                   "data_sources":{"calendar":"BaoStock with AKShare fallback","limit_up_pool":"AKShare Eastmoney interface","next_day_bars":"AKShare"},
                   "warning":"若 failed_pool_days > 0 或 failed_return_stocks > 0，统计不是完整样本。收益为样本日收盘到次日价格变化，未扣交易成本，且不代表可按样本日收盘价成交。"}
         (OUT / "run_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
