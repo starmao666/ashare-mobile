@@ -32,6 +32,7 @@ jobs:
       - name: Run three-year research
         run: python research_run.py
       - name: Publish result files
+        if: always()
         run: |
           mkdir -p docs/data
           cp research_data/output/run_report.json docs/data/ 2>/dev/null || true
