@@ -43,7 +43,7 @@ def main():
     args = parser.parse_args()
     root = Path(args.data_dir)
     rows = []
-    for strategy in ("baseline", "pullback"):
+    for strategy in ("baseline", "pullback", "trend_pullback"):
         trades_path = root / f"{strategy}_trades.csv"
         equity_path = root / f"{strategy}_equity.csv"
         if not trades_path.exists() or not equity_path.exists():
