@@ -35,6 +35,7 @@ jobs:
         run: |
           python portfolio_backtest.py data/daily_bars.csv --strategy baseline --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/baseline_trades.csv --equity-out data/baseline_equity.csv
           python portfolio_backtest.py data/daily_bars.csv --strategy pullback --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/pullback_trades.csv --equity-out data/pullback_equity.csv
+          python portfolio_backtest.py data/daily_bars.csv --strategy trend_pullback --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/trend_pullback_trades.csv --equity-out data/trend_pullback_equity.csv
           python summarize_backtest.py --data-dir data --out data/strategy_summary.csv
       - name: Upload backtest results
         if: always()
