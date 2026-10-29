@@ -44,5 +44,6 @@ jobs:
             echo "No result files changed"
           else
             git commit -m "Update three-year limit-up research data"
+            git pull --rebase origin main
             git push
           fi
