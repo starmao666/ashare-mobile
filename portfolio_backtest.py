@@ -51,8 +51,15 @@ def build_signals(df: pd.DataFrame, strategy: str = "baseline") -> pd.DataFrame:
                 g["ma20_rising"] & (g["prior_5d_gain"] >= 0.05) & near_ma
                 & g["day_return"].between(-0.03, 0.01)
             )
+        elif strategy == "trend_pullback":
+            # Trend/momentum framework: only past/current data; enter after
+            # positive medium-term momentum and a modest pullback in an uptrend.
+            g["ma60"] = g["close"].rolling(60, min_periods=60).mean()
+            g["momentum20"] = g["close"].shift(1) / g["close"].shift(21) - 1
+            trend = (g["close"] > g["ma20"]) & (g["ma20"] > g["ma60"])
+            g["signal"] = trend & (g["momentum20"] > 0) & g["day_return"].between(-0.035, 0.005)
         else:
-            raise ValueError("strategy must be 'baseline' or 'pullback'")
+            raise ValueError("strategy must be 'baseline', 'pullback', or 'trend_pullback'")
         parts.append(g)
     if not parts:
         result = df.copy()
@@ -182,8 +189,8 @@ def main() -> None:
     parser.add_argument("--max-hold", type=int, default=5)
     parser.add_argument("--max-positions", type=int, default=5)
     parser.add_argument("--fee", type=float, default=0.0003, help="Per-side fee approximation")
-    parser.add_argument("--strategy", choices=["baseline", "pullback"], default="baseline",
-                        help="baseline signal or first-pullback research proxy")
+    parser.add_argument("--strategy", choices=["baseline", "pullback", "trend_pullback"], default="baseline",
+                        help="baseline, first-pullback proxy, or trend-confirmed pullback")
     parser.add_argument("--out", default="portfolio_trades.csv")
     parser.add_argument("--equity-out", default="portfolio_equity.csv")
     args = parser.parse_args()
