@@ -41,10 +41,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/data
+          echo "=== Research report ==="
+          cat docs/data/run_report.json 2>/dev/null || true
+          echo "=== Data source failure details (if any) ==="
+          cat docs/data/fatal_error.txt 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No result files changed"
           else
             git commit -m "Update three-year limit-up research data"
-            git pull --rebase origin main
-            git push
+            for attempt in 1 2 3 4 5; do
+              git fetch origin main
+              git rebase origin/main || { git rebase --abort || true; }
+              if git push; then
+                echo "Published research files successfully"
+                exit 0
+              fi
+              echo "Push attempt $attempt failed; retrying after syncing main"
+              sleep 3
+            done
+            echo "Could not publish research files after 5 attempts"
+            exit 1
           fi
