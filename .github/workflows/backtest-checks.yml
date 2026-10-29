@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Compile Python files
-        run: python -m py_compile fetch_history.py backtest.py portfolio_backtest.py
+        run: python -m py_compile fetch_history.py backtest.py portfolio_backtest.py summarize_backtest.py
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
       - name: Download real historical daily bars
@@ -35,6 +35,7 @@ jobs:
         run: |
           python portfolio_backtest.py data/daily_bars.csv --strategy baseline --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/baseline_trades.csv --equity-out data/baseline_equity.csv
           python portfolio_backtest.py data/daily_bars.csv --strategy pullback --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/pullback_trades.csv --equity-out data/pullback_equity.csv
+          python summarize_backtest.py --data-dir data --out data/strategy_summary.csv
       - name: Upload backtest results
         if: always()
         uses: actions/upload-artifact@v4
