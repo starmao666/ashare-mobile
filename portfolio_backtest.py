@@ -1,0 +1,190 @@
+"""Portfolio-level research backtest for CSV daily bars.
+
+This improves on the single-ticker baseline by enforcing a shared cash balance
+and per-trade risk budget. Signals are evaluated after each date's close and
+entries occur at the next available date's open. Daily OHLC bars cannot reveal
+intraday event ordering, so stop-loss is assumed first when stop and target are
+both touched. This is a research approximation, not a broker-grade simulator.
+"""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import pandas as pd
+
+REQUIRED = {"date", "code", "open", "high", "low", "close"}
+
+
+def prepare(path: str) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    missing = REQUIRED - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV missing required columns: {', '.join(sorted(missing))}")
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for c in ("open", "high", "low", "close"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["code"] = df["code"].astype(str).str.zfill(6)
+    df = df.dropna(subset=list(REQUIRED))
+    df = df[(df[["open", "high", "low", "close"]] > 0).all(axis=1)]
+    df = df[df["high"] >= df[["open", "low", "close"]].max(axis=1)]
+    df = df[df["low"] <= df[["open", "high", "close"]].min(axis=1)]
+    df = df.drop_duplicates(["date", "code"]).sort_values(["date", "code"])
+    return df.reset_index(drop=True)
+
+
+def build_signals(df: pd.DataFrame) -> pd.DataFrame:
+    parts = []
+    for code, group in df.groupby("code", sort=False):
+        g = group.sort_values("date").copy()
+        g["ma20"] = g["close"].rolling(20, min_periods=20).mean()
+        g["day_return"] = g["close"].pct_change()
+        g["signal"] = (g["close"] > g["ma20"]) & g["day_return"].between(-0.03, 0.02)
+        parts.append(g)
+    return pd.concat(parts, ignore_index=True).sort_values(["date", "code"])
+
+
+def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
+                       risk_fraction: float = 0.0075, stop_fraction: float = 0.05,
+                       target_fraction: float = 0.08, max_hold: int = 5,
+                       max_positions: int = 5, fee_rate: float = 0.0003) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if initial_cash <= 0 or not (0 < risk_fraction < 1) or not (0 < stop_fraction < 1):
+        raise ValueError("capital/risk/stop parameters are invalid")
+    if target_fraction <= 0 or max_hold < 1 or max_positions < 1 or fee_rate < 0:
+        raise ValueError("target/holding/position/fee parameters are invalid")
+
+    data = build_signals(df)
+    dates = sorted(data["date"].dropna().unique())
+    by_date = {d: frame.set_index("code", drop=False) for d, frame in data.groupby("date")}
+    cash = float(initial_cash)
+    positions = {}
+    trades, equity_rows = [], []
+    pending = []
+    for day_index, date in enumerate(dates):
+        todays = by_date.get(date)
+        if todays is None:
+            continue
+
+        # Entries are queued from the previous session close, never same-close fills.
+        for code in list(pending):
+            if code in positions or len(positions) >= max_positions or code not in todays.index:
+                continue
+            row = todays.loc[code]
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[0]
+            entry = float(row["open"])
+            if entry <= 0:
+                continue
+            risk_cash = initial_cash * risk_fraction
+            risk_per_share = entry * stop_fraction
+            shares_by_risk = int(risk_cash / risk_per_share / 100) * 100
+            shares_by_cash = int(cash / (entry * (1 + fee_rate)) / 100) * 100
+            shares = min(shares_by_risk, shares_by_cash)
+            if shares < 100:
+                continue
+            cost = shares * entry
+            fee = cost * fee_rate
+            cash -= cost + fee
+            positions[code] = {
+                "entry_date": pd.Timestamp(date), "entry_price": entry, "shares": shares,
+                "stop": entry * (1 - stop_fraction), "target": entry * (1 + target_fraction),
+                "bars_held": 0, "entry_fee": fee, "signal_date": None,
+            }
+        pending = []
+
+        # Exit logic uses today's high/low and conservative stop-first tie break.
+        for code in list(positions):
+            if code not in todays.index:
+                # No quote today: do not invent an exit price; keep position marked at last close.
+                continue
+            row = todays.loc[code]
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[0]
+            pos = positions[code]
+            pos["bars_held"] += 1
+            low, high = float(row["low"]), float(row["high"])
+            close = float(row["close"])
+            reason, price = None, close
+            if low <= pos["stop"]:
+                reason, price = "stop_loss", pos["stop"]
+            elif high >= pos["target"]:
+                reason, price = "take_profit", pos["target"]
+            elif pos["bars_held"] >= max_hold:
+                reason, price = "max_hold", close
+            if reason:
+                proceeds = pos["shares"] * price
+                exit_fee = proceeds * fee_rate
+                cash += proceeds - exit_fee
+                pnl = (price - pos["entry_price"]) * pos["shares"] - pos["entry_fee"] - exit_fee
+                trades.append({
+                    "code": code, "entry_date": pos["entry_date"].date().isoformat(),
+                    "exit_date": pd.Timestamp(date).date().isoformat(),
+                    "entry_price": pos["entry_price"], "exit_price": price,
+                    "shares": pos["shares"], "exit_reason": reason,
+                    "pnl_after_modeled_fees": round(pnl, 2),
+                    "return_pct_on_entry_value": round((price / pos["entry_price"] - 1) * 100, 4),
+                    "holding_bars": pos["bars_held"],
+                })
+                del positions[code]
+
+        # Mark-to-market equity at close; missing quote uses entry price conservatively.
+        market_value = 0.0
+        for code, pos in positions.items():
+            if code in todays.index:
+                row = todays.loc[code]
+                if isinstance(row, pd.DataFrame):
+                    row = row.iloc[0]
+                mark = float(row["close"])
+            else:
+                mark = pos["entry_price"]
+            market_value += pos["shares"] * mark
+        equity = cash + market_value
+        equity_rows.append({"date": pd.Timestamp(date).date().isoformat(), "cash": round(cash, 2),
+                            "market_value": round(market_value, 2), "equity": round(equity, 2)})
+
+        # Queue today's after-close signals for next date.
+        if day_index < len(dates) - 1:
+            for code, row in todays.iterrows():
+                if code not in positions and bool(row["signal"]):
+                    pending.append(code)
+
+    return pd.DataFrame(trades), pd.DataFrame(equity_rows)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Portfolio-level research backtest")
+    parser.add_argument("csv")
+    parser.add_argument("--capital", type=float, default=1_000_000)
+    parser.add_argument("--risk", type=float, default=0.0075)
+    parser.add_argument("--stop", type=float, default=0.05)
+    parser.add_argument("--target", type=float, default=0.08)
+    parser.add_argument("--max-hold", type=int, default=5)
+    parser.add_argument("--max-positions", type=int, default=5)
+    parser.add_argument("--fee", type=float, default=0.0003, help="Per-side fee approximation")
+    parser.add_argument("--out", default="portfolio_trades.csv")
+    parser.add_argument("--equity-out", default="portfolio_equity.csv")
+    args = parser.parse_args()
+    df = prepare(args.csv)
+    if df.empty:
+        raise SystemExit("No valid history rows; no backtest run.")
+    trades, equity = backtest_portfolio(df, args.capital, args.risk, args.stop,
+                                        args.target, args.max_hold, args.max_positions, args.fee)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.equity_out).parent.mkdir(parents=True, exist_ok=True)
+    trades.to_csv(args.out, index=False, encoding="utf-8-sig")
+    equity.to_csv(args.equity_out, index=False, encoding="utf-8-sig")
+    print(f"Valid bars: {len(df)} | stocks: {df['code'].nunique()}")
+    print(f"Trades: {len(trades)}")
+    if not equity.empty:
+        eq = equity["equity"]
+        peak = eq.cummax()
+        dd = eq / peak - 1
+        print(f"Final equity: {eq.iloc[-1]:.2f} (initial {args.capital:.2f})")
+        print(f"Max equity drawdown: {dd.min() * 100:.2f}%")
+    if not trades.empty:
+        print(f"Win rate: {(trades['pnl_after_modeled_fees'] > 0).mean() * 100:.2f}%")
+    print("Research approximation only: fees are simplified; slippage, price limits, taxes, "
+          "suspensions and corporate-action execution are not fully modeled.")
+
+
+if __name__ == "__main__":
+    main()
