@@ -191,8 +191,11 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
             close = float(row["close"])
             reason, price = None, close
             if low <= pos["stop"]:
-                reason, price = "stop_loss", pos["stop"]
+                # If the session opens below the stop, model the gap at the open,
+                # not at the unreachable stop trigger (still apply adverse slippage).
+                reason, price = "stop_loss", min(float(row["open"]), pos["stop"])
             elif high >= pos["target"]:
+                # Conservative target fill: do not assume price improvement on gaps.
                 reason, price = "take_profit", pos["target"]
             elif pos["bars_held"] >= max_hold:
                 reason, price = "max_hold", close
