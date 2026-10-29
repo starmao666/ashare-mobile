@@ -24,6 +24,33 @@ class PortfolioTests(unittest.TestCase):
         self.assertTrue(equity.empty)
 
 
+    def test_stop_loss_gap_uses_open_not_unreachable_stop(self):
+        dates = pd.date_range("2024-01-01", periods=27, freq="B")
+        rows = []
+        for i, date in enumerate(dates):
+            open_price = close = 10.0
+            high, low = 10.2, 9.8
+            if i == 24:
+                open_price, high, low, close = 10.0, 10.2, 9.9, 10.1
+            elif i == 25:
+                open_price, high, low, close = 10.1, 10.2, 10.0, 10.1
+            elif i == 26:
+                # Opens through a 5% stop: execution must use 9.0 open, not 9.595 stop.
+                open_price, high, low, close = 9.0, 9.2, 8.8, 9.0
+            rows.append({"date": date, "code": "000001", "open": open_price,
+                         "high": high, "low": low, "close": close})
+        trades, _ = backtest_portfolio(
+            pd.DataFrame(rows), initial_cash=100_000, risk_fraction=0.0075,
+            stop_fraction=0.05, target_fraction=0.08, max_hold=2,
+            max_positions=1, fee_rate=0.0003, sell_tax_rate=0.0005,
+            slippage_rate=0.0005, strategy="baseline"
+        )
+        self.assertEqual(len(trades), 1)
+        trade = trades.iloc[0]
+        self.assertEqual(trade["exit_reason"], "stop_loss")
+        self.assertAlmostEqual(trade["exit_trigger_price"], 9.0, places=6)
+        self.assertLess(trade["exit_price"], 9.0)
+
     def test_locked_limit_and_suspension_detection(self):
         up = pd.Series({"open": 11.0, "high": 11.0, "low": 11.0, "close": 11.0,
                         "pct_chg": 10.0, "volume": 1000, "amount": 10000})
