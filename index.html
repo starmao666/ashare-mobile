@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220"><title>A股短线选股器 V1.0</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121c2d;--muted:#8fa1ba;--line:#26354b;--green:#22c55e;--red:#f87171;--blue:#60a5fa}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#0b1220,#0d1626);color:#e5edf8;font:15px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:1000px;margin:auto;padding:18px 14px 42px}.hero{padding:20px 18px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(135deg,#17243a,#101827)}
+.kicker{font-size:12px;color:#93c5fd;letter-spacing:1px}.title{font-size:25px;font-weight:800;margin:5px 0}.sub{color:var(--muted);font-size:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:12px 0}
+.stat,.panel{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:13px}.stat small{display:block;color:var(--muted);font-size:12px}.stat strong{font-size:19px;display:block;margin-top:4px}
+button,select,input{font:inherit;color:inherit;background:#18253a;border:1px solid #344760;border-radius:10px;padding:10px 12px}button{cursor:pointer;background:#2563eb;border-color:#2563eb;font-weight:700}button.secondary{background:#18253a;border-color:#344760}button:disabled{opacity:.5}
+.panel{margin-top:12px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px}.section-head h2{font-size:16px;margin:0}
+.pill{font-size:12px;padding:4px 8px;border-radius:99px;background:#1e3a5f;color:#bfdbfe}.muted{color:var(--muted)}.status{font-size:12px;color:var(--muted);margin-top:9px}
+.filters{display:flex;gap:8px;flex-wrap:wrap}.filters select{flex:1;min-width:130px}
+.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:590px;font-variant-numeric:tabular-nums}th,td{text-align:right;padding:11px 8px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-size:12px;font-weight:600}th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}.name{font-weight:700}.code{font-size:11px;color:var(--muted)}.score{display:inline-block;min-width:36px;text-align:center;background:#1e3a5f;color:#bfdbfe;padding:3px 7px;border-radius:7px}.up{color:var(--red)}.down{color:var(--green)}.empty{text-align:center;padding:30px 10px;color:var(--muted)}
+.note{font-size:12px;color:var(--muted);line-height:1.7}.foot{padding:15px 4px;color:var(--muted);font-size:11px}
+@media(min-width:700px){main{padding-top:28px}.title{font-size:30px}.stats{gap:12px}.stat{padding:17px}}
+</style></head>
+<body><main>
+<section class="hero"><div class="kicker">ASHARE · SHORT-TERM SCREENER</div><div class="title">A股短线选股器 <span style="color:#60a5fa">V1.0</span></div><div class="sub">强势回调观察 · 量价筛选 · 风险纪律优先</div>
+<div class="row" style="margin-top:16px"><button id="refresh">刷新行情</button><span class="pill" id="liveTag">等待行情连接</span></div><div class="status" id="updated">尚未获取行情；页面不会用虚构数据填充结果。</div></section>
+<div class="stats"><div class="stat"><small>本次扫描</small><strong id="scanned">—</strong></div><div class="stat"><small>符合观察条件</small><strong id="qualified">—</strong></div><div class="stat"><small>数据状态</small><strong id="dataState" style="font-size:15px">未连接</strong></div></div>
+<section class="panel"><div class="section-head"><h2>筛选条件</h2><span class="pill">仅作观察名单</span></div><div class="filters">
+<select id="market"><option value="all">沪深主板 + 创业板</option><option value="main">沪深主板</option><option value="growth">创业板</option></select>
+<select id="change"><option value="all">涨跌幅不限</option><option value="pullback">强势回调观察（-3%至+2%）</option><option value="positive">当日上涨</option></select>
+<select id="sort"><option value="score">按模型分数</option><option value="change">按涨幅</option><option value="turnover">按换手率</option></select></div><p class="note">评分使用公开行情中的涨跌幅、换手率、量比和成交额等技术字段；不代表完整基本面评估，也不预测收益。剔除 ST、退市整理类名称和明显异常价格。</p></section>
+<section class="panel"><div class="section-head"><h2>短线观察 Top 10</h2><span class="muted" id="countLabel">等待数据</span></div><div class="table-wrap"><table><thead><tr><th>排名</th><th>股票</th><th>现价</th><th>涨跌幅</th><th>换手率</th><th>量比</th><th>评分</th></tr></thead><tbody id="stocks"><tr><td colspan="7" class="empty">点击“刷新行情”获取公开行情数据</td></tr></tbody></table></div><div class="status" id="error"></div></section>
+<section class="panel"><div class="section-head"><h2>交易纪律提示</h2></div><ul class="note"><li>观察名单不是买入指令，买入前需核对公告、业绩、行业主线与流动性。</li><li>单笔计划亏损上限建议按账户总资产的 0.75% 计算；仓位 = 可承受亏损金额 ÷（计划买入价与止损价之差）。</li><li>避免追涨；若回调放量破位、重大利空、风险警示或流动性不足，应剔除。</li><li>此版本未执行历史回测，不能宣称策略已有胜率或收益验证。</li></ul></section>
+<div class="foot">行情接口为第三方公开数据源，可能延迟、限流或变更；如连接失败，将显示错误而不是编造数据。仅供学习研究，不构成投资建议。</div>
+</main>
+<script>
+const $=id=>document.getElementById(id); let raw=[];
+const endpoint='https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=500&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f15,f16,f17,f18,f20,f21,f23';
+function n(v){return Number(v)||0} function fmt(v,d=2){return Number.isFinite(v)?v.toFixed(d):'—'}
+function score(s){let ch=s.change, tr=s.turn, vr=s.vol, amt=s.amount;let sc=35;
+if(ch>=-3&&ch<=2)sc+=20; else if(ch>2&&ch<=5)sc+=12; else if(ch>5&&ch<9.7)sc+=4; else if(ch< -3)sc-=8;
+if(tr>=2&&tr<=12)sc+=15;else if(tr>12)sc+=5;else sc-=5;
+if(vr>=1&&vr<=2.5)sc+=15;else if(vr>2.5&&vr<=4)sc+=8;else if(vr<0.7)sc-=5;
+if(amt>=100000000)sc+=10; if(ch>=9.7)sc-=18; return Math.max(0,Math.min(100,Math.round(sc)))}
+function eligible(s){if(!s.code||s.price<=0||/ST|退/.test(s.name))return false;const market=$('market').value;if(market==='main'&&(s.code.startsWith('30')||s.code.startsWith('68')))return false;if(market==='growth'&&!s.code.startsWith('30'))return false;const c=$('change').value;if(c==='pullback'&&!(s.change>=-3&&s.change<=2))return false;if(c==='positive'&&s.change<=0)return false;return true}
+function render(){let list=raw.filter(eligible).map(s=>({...s,score:score(s)}));let sort=$('sort').value;list.sort((a,b)=>sort==='change'?b.change-a.change:sort==='turnover'?b.turn-a.turn:b.score-a.score);$('qualified').textContent=list.length;$('countLabel').textContent='显示 '+Math.min(10,list.length)+' / '+list.length+' 只';$('stocks').innerHTML=list.slice(0,10).map((s,i)=>'<tr><td>'+(i+1)+'</td><td><div class="name">'+s.name+'</div><div class="code">'+s.code+'</div></td><td>'+fmt(s.price)+'</td><td class="'+(s.change>=0?'up':'down')+'">'+(s.change>0?'+':'')+fmt(s.change)+'%</td><td>'+fmt(s.turn)+'%</td><td>'+fmt(s.vol)+'</td><td><span class="score">'+s.score+'</span></td></tr>').join('')||'<tr><td colspan="7" class="empty">当前条件下没有符合项</td></tr>'}
+async function load(){const btn=$('refresh');btn.disabled=true;$('error').textContent='';$('liveTag').textContent='正在获取行情…';$('dataState').textContent='连接中';try{const res=await fetch(endpoint,{cache:'no-store'});if(!res.ok)throw Error('行情接口返回 HTTP '+res.status);const json=await res.json();const diff=json?.data?.diff;if(!Array.isArray(diff)||!diff.length)throw Error('接口没有返回有效行情列表');raw=diff.map(x=>({code:String(x.f12||''),name:String(x.f14||''),price:n(x.f2),change:n(x.f3),amount:n(x.f6),turn:n(x.f8),vol:n(x.f10)}));$('scanned').textContent=raw.length;$('dataState').textContent='已获取';$('liveTag').textContent='行情已返回';$('updated').textContent='最近获取：'+new Date().toLocaleString('zh-CN')+' · 数据源：东方财富公开行情接口';render()}catch(e){$('liveTag').textContent='行情连接失败';$('dataState').textContent='失败';$('updated').textContent='获取失败，不展示虚构行情。可稍后重试或检查网络/接口跨域限制。';$('error').textContent='错误信息：'+(e?.message||String(e));$('stocks').innerHTML='<tr><td colspan="7" class="empty">暂时无法获取实时数据，请稍后重试。</td></tr>'}finally{btn.disabled=false}}
+$('refresh').addEventListener('click',load);['market','change','sort'].forEach(id=>$(id).addEventListener('change',render));load();
+</script></body></html>
