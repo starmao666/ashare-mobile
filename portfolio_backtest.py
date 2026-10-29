@@ -110,7 +110,7 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
                 "stop": entry * (1 - stop_fraction), "target": entry * (1 + target_fraction),
                 "bars_held": 0, "entry_fee": fee, "signal_date": pd.Timestamp(signal_date).date().isoformat(),
             }
-        pending = []
+        pending = {}
 
         # Exit logic uses today's high/low and conservative stop-first tie break.
         for code in list(positions):
