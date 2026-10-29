@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: ashare-mobile
+    runtime: static
+    buildCommand: ""
+    staticPublishPath: .
+    autoDeploy: true
