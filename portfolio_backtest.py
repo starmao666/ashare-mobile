@@ -95,7 +95,7 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
             entry = float(row["open"])
             if entry <= 0:
                 continue
-            risk_cash = initial_cash * risk_fraction
+            risk_cash = max(equity_value, 0.0) * risk_fraction
             risk_per_share = entry * stop_fraction
             shares_by_risk = int(risk_cash / risk_per_share / 100) * 100
             shares_by_cash = int(cash / (entry * (1 + fee_rate)) / 100) * 100
