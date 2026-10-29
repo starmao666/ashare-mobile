@@ -1,7 +1,8 @@
 services:
   - type: web
-    name: ashare-mobile
-    runtime: static
-    buildCommand: ""
-    staticPublishPath: .
+    name: ashare-limitup-research
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --threads 4 --timeout 120
     autoDeploy: true
