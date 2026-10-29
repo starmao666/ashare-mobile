@@ -18,6 +18,13 @@ async function load(){
   const r=await fetch(base+'run_report.json?ts='+Date.now());
   if(!r.ok) throw new Error('还没有已发布的 run_report.json');
   const d=await r.json(); const p=d.period||{};
+  if(d.status==='failed'){
+   status.innerHTML='<span class="err">研究任务失败，尚无有效统计结果</span>';
+   stats.innerHTML='';
+   summary.innerHTML='<p class="err">'+esc(d.error||'未提供具体错误原因')+'</p><p class="muted">'+esc(d.warning||'请查看工作流日志。')+'</p>';
+   files.innerHTML='<p><a href="'+base+'run_report.json">查看错误报告 JSON</a></p><a href="https://github.com/starmao666/ashare-mobile/actions/workflows/limitup-research.yml">打开工作流日志</a>';
+   return;
+  }
   status.innerHTML='研究期 '+(p.start||'未知')+' 至 '+(p.end||'未知')+' · '+(d.complete?'数据源交易日全部成功':'<span class="warn">存在失败日期，结果可能不完整</span>');
   const items=[['交易日数',d.trading_days],['成功交易日',d.successful_pool_days],['失败交易日',d.failed_pool_days],['连板≥3样本行',d.three_plus_sample_rows],['不同股票数',d.three_plus_unique_stocks],['次日收益样本',d.return_rows]];
   stats.innerHTML=items.map(x=>'<div class="stat"><div class="num">'+(x[1]??'—')+'</div><div class="label">'+x[0]+'</div></div>').join('');
