@@ -1,6 +1,6 @@
 import unittest
 import pandas as pd
-from portfolio_backtest import backtest_portfolio, prepare
+from portfolio_backtest import (backtest_portfolio, prepare, is_locked_limit_up, is_locked_limit_down, is_suspended)
 
 
 class PortfolioTests(unittest.TestCase):
@@ -22,6 +22,23 @@ class PortfolioTests(unittest.TestCase):
         trades, equity = backtest_portfolio(pd.DataFrame(columns=cols))
         self.assertTrue(trades.empty)
         self.assertTrue(equity.empty)
+
+
+    def test_locked_limit_and_suspension_detection(self):
+        up = pd.Series({"open": 11.0, "high": 11.0, "low": 11.0, "close": 11.0,
+                        "pct_chg": 10.0, "volume": 1000, "amount": 10000})
+        down = pd.Series({"open": 9.0, "high": 9.0, "low": 9.0, "close": 9.0,
+                          "pct_chg": -10.0, "volume": 1000, "amount": 10000})
+        suspended = pd.Series({"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0,
+                               "pct_chg": 0.0, "volume": 0, "amount": 0})
+        normal = pd.Series({"open": 10.0, "high": 10.2, "low": 9.8, "close": 10.1,
+                            "pct_chg": 1.0, "volume": 1000, "amount": 10000})
+        self.assertTrue(is_locked_limit_up(up))
+        self.assertTrue(is_locked_limit_down(down))
+        self.assertTrue(is_suspended(suspended))
+        self.assertFalse(is_locked_limit_up(normal))
+        self.assertFalse(is_locked_limit_down(normal))
+        self.assertFalse(is_suspended(normal))
 
 
     def test_t_plus_one_and_costs_are_applied(self):
