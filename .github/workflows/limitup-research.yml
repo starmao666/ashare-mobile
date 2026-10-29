@@ -1,0 +1,41 @@
+name: A-share limit-up research
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 0 * * 1"
+permissions:
+  contents: write
+concurrency:
+  group: limitup-research
+  cancel-in-progress: false
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run three-year research
+        run: python research_run.py
+      - name: Publish result files
+        run: |
+          mkdir -p docs/data
+          cp research_data/output/run_report.json docs/data/ 2>/dev/null || true
+          cp research_data/output/*.csv docs/data/ 2>/dev/null || true
+          cp research_data/output/fatal_error.txt docs/data/ 2>/dev/null || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data
+          if git diff --cached --quiet; then
+            echo "No result files changed"
+          else
+            git commit -m "Update three-year limit-up research data"
+            git push
+          fi
