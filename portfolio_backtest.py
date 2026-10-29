@@ -32,13 +32,27 @@ def prepare(path: str) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-def build_signals(df: pd.DataFrame) -> pd.DataFrame:
+def build_signals(df: pd.DataFrame, strategy: str = "baseline") -> pd.DataFrame:
     parts = []
     for code, group in df.groupby("code", sort=False):
         g = group.sort_values("date").copy()
         g["ma20"] = g["close"].rolling(20, min_periods=20).mean()
         g["day_return"] = g["close"].pct_change()
-        g["signal"] = (g["close"] > g["ma20"]) & g["day_return"].between(-0.03, 0.02)
+        baseline_signal = (g["close"] > g["ma20"]) & g["day_return"].between(-0.03, 0.02)
+        if strategy == "baseline":
+            g["signal"] = baseline_signal
+        elif strategy == "pullback":
+            # Research proxy: rising MA20, prior 5-session gain >= 5%,
+            # close near MA20, and a modest red/flat day.
+            g["ma20_rising"] = g["ma20"] > g["ma20"].shift(5)
+            g["prior_5d_gain"] = g["close"].shift(1) / g["close"].shift(6) - 1
+            near_ma = g["close"].between(g["ma20"] * 0.97, g["ma20"] * 1.03)
+            g["signal"] = (
+                g["ma20_rising"] & (g["prior_5d_gain"] >= 0.05) & near_ma
+                & g["day_return"].between(-0.03, 0.01)
+            )
+        else:
+            raise ValueError("strategy must be 'baseline' or 'pullback'")
         parts.append(g)
     if not parts:
         result = df.copy()
@@ -52,26 +66,27 @@ def build_signals(df: pd.DataFrame) -> pd.DataFrame:
 def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
                        risk_fraction: float = 0.0075, stop_fraction: float = 0.05,
                        target_fraction: float = 0.08, max_hold: int = 5,
-                       max_positions: int = 5, fee_rate: float = 0.0003) -> tuple[pd.DataFrame, pd.DataFrame]:
+                       max_positions: int = 5, fee_rate: float = 0.0003,
+                       strategy: str = "baseline") -> tuple[pd.DataFrame, pd.DataFrame]:
     if initial_cash <= 0 or not (0 < risk_fraction < 1) or not (0 < stop_fraction < 1):
         raise ValueError("capital/risk/stop parameters are invalid")
     if target_fraction <= 0 or max_hold < 1 or max_positions < 1 or fee_rate < 0:
         raise ValueError("target/holding/position/fee parameters are invalid")
 
-    data = build_signals(df)
+    data = build_signals(df, strategy=strategy)
     dates = sorted(data["date"].dropna().unique())
     by_date = {d: frame.set_index("code", drop=False) for d, frame in data.groupby("date")}
     cash = float(initial_cash)
     positions = {}
     trades, equity_rows = [], []
-    pending = []
+    pending = {}
     for day_index, date in enumerate(dates):
         todays = by_date.get(date)
         if todays is None:
             continue
 
         # Entries are queued from the previous session close, never same-close fills.
-        for code in list(pending):
+        for code, signal_date in list(pending.items()):
             if code in positions or len(positions) >= max_positions or code not in todays.index:
                 continue
             row = todays.loc[code]
@@ -93,7 +108,7 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
             positions[code] = {
                 "entry_date": pd.Timestamp(date), "entry_price": entry, "shares": shares,
                 "stop": entry * (1 - stop_fraction), "target": entry * (1 + target_fraction),
-                "bars_held": 0, "entry_fee": fee, "signal_date": None,
+                "bars_held": 0, "entry_fee": fee, "signal_date": pd.Timestamp(signal_date).date().isoformat(),
             }
         pending = []
 
@@ -122,7 +137,8 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
                 cash += proceeds - exit_fee
                 pnl = (price - pos["entry_price"]) * pos["shares"] - pos["entry_fee"] - exit_fee
                 trades.append({
-                    "code": code, "entry_date": pos["entry_date"].date().isoformat(),
+                    "code": code, "signal_date": pos.get("signal_date"),
+                    "entry_date": pos["entry_date"].date().isoformat(),
                     "exit_date": pd.Timestamp(date).date().isoformat(),
                     "entry_price": pos["entry_price"], "exit_price": price,
                     "shares": pos["shares"], "exit_reason": reason,
@@ -151,7 +167,7 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
         if day_index < len(dates) - 1:
             for code, row in todays.iterrows():
                 if code not in positions and bool(row["signal"]):
-                    pending.append(code)
+                    pending[code] = pd.Timestamp(date)
 
     return pd.DataFrame(trades), pd.DataFrame(equity_rows)
 
@@ -166,6 +182,8 @@ def main() -> None:
     parser.add_argument("--max-hold", type=int, default=5)
     parser.add_argument("--max-positions", type=int, default=5)
     parser.add_argument("--fee", type=float, default=0.0003, help="Per-side fee approximation")
+    parser.add_argument("--strategy", choices=["baseline", "pullback"], default="baseline",
+                        help="baseline signal or first-pullback research proxy")
     parser.add_argument("--out", default="portfolio_trades.csv")
     parser.add_argument("--equity-out", default="portfolio_equity.csv")
     args = parser.parse_args()
@@ -173,7 +191,7 @@ def main() -> None:
     if df.empty:
         raise SystemExit("No valid history rows; no backtest run.")
     trades, equity = backtest_portfolio(df, args.capital, args.risk, args.stop,
-                                        args.target, args.max_hold, args.max_positions, args.fee)
+                                        args.target, args.max_hold, args.max_positions, args.fee, args.strategy)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.equity_out).parent.mkdir(parents=True, exist_ok=True)
     trades.to_csv(args.out, index=False, encoding="utf-8-sig")
