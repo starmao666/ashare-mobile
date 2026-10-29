@@ -70,6 +70,36 @@ def build_signals(df: pd.DataFrame, strategy: str = "baseline") -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True).sort_values(["date", "code"])
 
 
+def _bar_is_flat_locked(row: pd.Series) -> bool:
+    """True when OHLC are effectively identical, as on a fully locked limit bar."""
+    prices = [float(row[k]) for k in ("open", "high", "low", "close")]
+    scale = max(prices)
+    return scale > 0 and (max(prices) - min(prices)) / scale <= 0.001
+
+
+def is_locked_limit_up(row: pd.Series) -> bool:
+    """Conservative proxy; requires provider pct_chg and a flat OHLC bar."""
+    if "pct_chg" not in row.index or pd.isna(row.get("pct_chg")):
+        return False
+    return _bar_is_flat_locked(row) and float(row["pct_chg"]) >= 4.5
+
+
+def is_locked_limit_down(row: pd.Series) -> bool:
+    """Conservative proxy; requires provider pct_chg and a flat OHLC bar."""
+    if "pct_chg" not in row.index or pd.isna(row.get("pct_chg")):
+        return False
+    return _bar_is_flat_locked(row) and float(row["pct_chg"]) <= -4.5
+
+
+def is_suspended(row: pd.Series) -> bool:
+    """Detect explicit zero-volume/zero-amount bars when those fields exist."""
+    for field in ("volume", "amount"):
+        value = row.get(field)
+        if field in row.index and pd.notna(value) and float(value) <= 0:
+            return True
+    return False
+
+
 def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
                        risk_fraction: float = 0.0075, stop_fraction: float = 0.05,
                        target_fraction: float = 0.08, max_hold: int = 5,
@@ -114,6 +144,12 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
             row = todays.loc[code]
             if isinstance(row, pd.DataFrame):
                 row = row.iloc[0]
+            # Explicit zero-volume/zero-amount bars are treated as suspended.
+            if is_suspended(row):
+                continue
+            # A flat bar at the daily upper limit is assumed unfillable for a new buy.
+            if is_locked_limit_up(row):
+                continue
             raw_entry = float(row["open"])
             if raw_entry <= 0:
                 continue
@@ -144,6 +180,9 @@ def backtest_portfolio(df: pd.DataFrame, initial_cash: float = 1_000_000,
             if isinstance(row, pd.DataFrame):
                 row = row.iloc[0]
             pos = positions[code]
+            # Suspended or fully locked lower-limit bars cannot be assumed sellable.
+            if is_suspended(row) or is_locked_limit_down(row):
+                continue
             # A-share T+1: shares bought today cannot be sold today.
             if pd.Timestamp(date).date() <= pos["entry_date"].date():
                 continue
