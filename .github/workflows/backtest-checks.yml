@@ -27,3 +27,18 @@ jobs:
         run: python -m py_compile fetch_history.py backtest.py portfolio_backtest.py
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+      - name: Download real historical daily bars
+        run: |
+          mkdir -p data
+          python fetch_history.py --codes 000001,600000,000858,600519,300750,002594,601318,000333,600036,002415 --start 20230101 --end 20261028 --adjust qfq --out data/daily_bars.csv
+      - name: Run portfolio backtest
+        run: |
+          python portfolio_backtest.py data/daily_bars.csv --capital 1000000 --risk 0.0075 --stop 0.05 --target 0.08 --max-hold 5 --max-positions 5 --fee 0.0003 --out data/portfolio_trades.csv --equity-out data/portfolio_equity.csv
+      - name: Upload backtest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ashare-backtest-results
+          path: data/*.csv
+          if-no-files-found: warn
+          retention-days: 14
