@@ -40,6 +40,12 @@ def build_signals(df: pd.DataFrame) -> pd.DataFrame:
         g["day_return"] = g["close"].pct_change()
         g["signal"] = (g["close"] > g["ma20"]) & g["day_return"].between(-0.03, 0.02)
         parts.append(g)
+    if not parts:
+        result = df.copy()
+        result["ma20"] = pd.Series(dtype="float64")
+        result["day_return"] = pd.Series(dtype="float64")
+        result["signal"] = pd.Series(dtype="bool")
+        return result
     return pd.concat(parts, ignore_index=True).sort_values(["date", "code"])
 
 
