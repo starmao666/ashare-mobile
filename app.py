@@ -59,12 +59,41 @@ def worker(start, end):
     global state
     try:
         start_dt, end_dt = pd.Timestamp(start), pd.Timestamp(end)
-        # Use an index-like trading calendar from a liquid A-share symbol; only calendar dates are used.
-        cal = ak.stock_zh_a_hist(symbol="000001", period="daily", start_date=start_dt.strftime("%Y%m%d"),
-                                end_date=end_dt.strftime("%Y%m%d"), adjust="")
-        if cal is None or cal.empty or "日期" not in cal:
-            raise RuntimeError("无法取得交易日历；数据源可能暂时不可用。")
-        days = sorted(pd.to_datetime(cal["日期"]).dt.strftime("%Y%m%d").unique().tolist())
+        # Prefer BaoStock's dedicated exchange calendar; fall back to AKShare index daily bars.
+        days = []
+        calendar_errors = []
+        try:
+            import baostock as bs
+            lg = bs.login()
+            if getattr(lg, "error_code", "1") == "0":
+                try:
+                    rs = bs.query_trade_dates(start_date=start_dt.strftime("%Y-%m-%d"), end_date=end_dt.strftime("%Y-%m-%d"))
+                    if getattr(rs, "error_code", "1") == "0":
+                        calendar_rows = []
+                        while rs.next():
+                            calendar_rows.append(rs.get_row_data())
+                        cal_bs = pd.DataFrame(calendar_rows, columns=rs.fields)
+                        if not cal_bs.empty and {"calendar_date", "is_trading_day"}.issubset(cal_bs.columns):
+                            days = cal_bs.loc[cal_bs["is_trading_day"].astype(str) == "1", "calendar_date"].tolist()
+                    else:
+                        calendar_errors.append("BaoStock交易日历：" + str(getattr(rs, "error_msg", "查询失败")))
+                finally:
+                    bs.logout()
+            else:
+                calendar_errors.append("BaoStock登录失败：" + str(getattr(lg, "error_msg", "未知原因")))
+        except Exception as exc:
+            calendar_errors.append("BaoStock交易日历异常：" + repr(exc))
+        if not days:
+            try:
+                cal = ak.stock_zh_a_hist(symbol="000001", period="daily", start_date=start_dt.strftime("%Y%m%d"),
+                                        end_date=end_dt.strftime("%Y%m%d"), adjust="")
+                if cal is not None and not cal.empty and "日期" in cal:
+                    days = sorted(pd.to_datetime(cal["日期"]).dt.strftime("%Y%m%d").unique().tolist())
+            except Exception as exc:
+                calendar_errors.append("AKShare备用交易日历：" + repr(exc))
+        if not days:
+            raise RuntimeError("无法取得交易日历。尝试来源：" + "；".join(calendar_errors))
+        days = sorted(set(days))
         with lock:
             state.update({"total": len(days), "progress": 0, "message": "正在逐交易日抓取涨停池", "success_days": 0, "failed_days": 0})
         pools, fails = [], []
@@ -74,8 +103,21 @@ def worker(start, end):
                 if cache_file.exists():
                     raw = pd.read_csv(cache_file, dtype={"code": str})
                 else:
-                    raw = ak.stock_zt_pool_em(date=day)
-                    # Save raw response only after a successful API response; an empty response is a valid empty pool.
+                    last_error = None
+                    raw = None
+                    for attempt in range(3):
+                        try:
+                            raw = ak.stock_zt_pool_em(date=day)
+                            if raw is None:
+                                raise ValueError("涨停池接口返回 None")
+                            break
+                        except Exception as exc:
+                            last_error = exc
+                            if attempt < 2:
+                                time.sleep(1.5 * (attempt + 1))
+                    if raw is None:
+                        raise RuntimeError(f"涨停池接口连续重试失败：{type(last_error).__name__}: {last_error}")
+                    # Save only a successfully returned response; empty can be a valid empty pool.
                     raw.to_csv(cache_file, index=False, encoding="utf-8-sig")
                 n = norm_pool(raw, pd.to_datetime(day).strftime("%Y-%m-%d"))
                 if not n.empty: pools.append(n)
@@ -95,6 +137,7 @@ def worker(start, end):
         sample.to_csv(OUT / "three_plus_limitup_samples.csv", index=False, encoding="utf-8-sig")
         # Compute next-session returns for distinct sample stock codes. Failures remain visible; no synthetic data.
         returns = []
+        return_fails = []
         codes = sorted(sample["code"].dropna().astype(str).unique().tolist())
         with lock: state["message"] = f"补充 {len(codes)} 只样本股票的次日行情"
         for j, code in enumerate(codes, 1):
@@ -120,13 +163,14 @@ def worker(start, end):
                         row[field] = float((val/base-1)*100) if pd.notna(val) else None
                     returns.append(row)
             except Exception as exc:
-                # Record per-stock failures separately, do not fabricate returns.
-                pass
+                # Record per-stock failures separately; never silently discard missing return data.
+                return_fails.append({"code": code, "error": f"{type(exc).__name__}: {exc}"})
             if j % 10 == 0:
                 with lock: state["message"] = f"次日收益行情：{j}/{len(codes)} 只股票"
             time.sleep(0.18)
         ret = pd.DataFrame(returns)
         ret.to_csv(OUT / "three_plus_next_day_returns.csv", index=False, encoding="utf-8-sig")
+        pd.DataFrame(return_fails, columns=["code", "error"]).to_csv(OUT / "failed_return_stocks.csv", index=False, encoding="utf-8-sig")
         summary = []
         if not ret.empty:
             ret["streak_num"] = pd.to_numeric(ret["streak"], errors="coerce")
@@ -143,8 +187,9 @@ def worker(start, end):
                   "successful_pool_days":len(days)-len(fails), "failed_pool_days":len(fails),
                   "limit_pool_rows":int(len(all_pool)), "three_plus_sample_rows":int(len(sample)),
                   "three_plus_unique_stocks":int(sample["code"].nunique()) if not sample.empty else 0,
-                  "return_rows":len(ret), "complete":len(fails)==0,
-                  "warning":"若 failed_pool_days > 0，统计不是完整全市场样本。收益为样本日收盘到次日价格变化，未扣交易成本，且不代表可按样本日收盘价成交。"}
+                  "return_rows":len(ret), "failed_return_stocks":len(return_fails), "complete":len(fails)==0 and len(return_fails)==0,
+                  "data_sources":{"calendar":"BaoStock with AKShare fallback","limit_up_pool":"AKShare Eastmoney interface","next_day_bars":"AKShare"},
+                  "warning":"若 failed_pool_days > 0 或 failed_return_stocks > 0，统计不是完整样本。收益为样本日收盘到次日价格变化，未扣交易成本，且不代表可按样本日收盘价成交。"}
         (OUT / "run_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         with lock:
             state.update({"running":False,"done":True,"message":"统计结束；请先查看数据覆盖率与失败日期。","sample_rows":len(sample),"report":report})
@@ -180,7 +225,7 @@ def status():
 def files():
     items = []
     for name in ["run_report.json","daily_limit_pool_all.csv","three_plus_limitup_samples.csv",
-                 "three_plus_next_day_returns.csv","summary_by_streak.csv","failed_dates.csv"]:
+                 "three_plus_next_day_returns.csv","summary_by_streak.csv","failed_dates.csv","failed_return_stocks.csv"]:
         p = OUT / name
         if p.exists(): items.append({"name":name,"url":"/api/download/"+name,"bytes":p.stat().st_size})
     return jsonify({"files":items})
@@ -188,7 +233,7 @@ def files():
 @app.get("/api/download/<path:name>")
 def download(name):
     allowed = {"run_report.json","daily_limit_pool_all.csv","three_plus_limitup_samples.csv",
-               "three_plus_next_day_returns.csv","summary_by_streak.csv","failed_dates.csv"}
+               "three_plus_next_day_returns.csv","summary_by_streak.csv","failed_dates.csv","failed_return_stocks.csv"}
     if name not in allowed: return jsonify({"error":"not found"}), 404
     if not (OUT/name).exists(): return jsonify({"error":"文件尚未生成"}), 404
     return send_from_directory(OUT, name, as_attachment=True)
